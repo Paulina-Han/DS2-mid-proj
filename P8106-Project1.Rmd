@@ -1,0 +1,123 @@
+---
+title: "DS2_proj1"
+author: "Paulina Han"
+date: '2022-03-20'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(caret)
+#library(purrr)
+library(tidyverse)
+library(corrplot)
+library(patchwork)
+```
+
+
+read in the data
+```{r}
+bike_raw = read_csv("./SeoulBikeData.csv")
+bike = bike_raw %>% 
+  janitor::clean_names() %>%
+  mutate(weekday = weekdays( lubridate::dmy(date)))%>%
+  separate(date, into = c("day","month", "year"), sep = "/") %>%
+  mutate(
+        day = as.numeric(day),
+         month = as.factor(month),
+         year = as.numeric(year)
+         ) %>% 
+  select(-day,-month) %>% 
+  mutate(
+    seasons = as.factor(seasons),
+    holiday = as.factor(holiday),
+    functioning_day = as.factor(functioning_day),
+    weekday = as.factor(weekday)
+  ) %>% 
+  filter(year == 2018) %>% 
+  select(-year)
+
+bike %>% skimr::skim()
+table(bike$functioning_day)
+
+```
+
+scatter plot: obs not independent(time series)
+```{r continous_plot}
+#scatter plot
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col <- rgb(.2, .4, .2, .5)
+theme1$plot.symbol$pch <- 16
+theme1$plot.line$col <- rgb(.8, .1, .1, 1)
+theme1$plot.line$lwd <- 2
+theme1$strip.background$col <- rgb(.0, .2, .6, .2)
+trellis.par.set(theme1)
+
+bike_con = bike %>% select(-c(seasons,holiday,functioning_day,weekday))
+
+featurePlot(bike_con[-1], bike_con$rented_bike_count, plot = "scatter", labels = c("","bike_rented"),type = c("p"), layout = c(3, 3),cex = 0.5, alpha = 0.5)
+#ts.plot(bike$rented_bike_count)
+
+
+```
+date into ascending 1~365
+rely on assumption iid(treat them as iid): limitations
+```{r discrete_plots, warning=FALSE}
+#hourly rented bike density in each season
+bike_dis = bike %>% select(c(seasons,holiday,functioning_day,weekday,rented_bike_count))
+#hourly rented bike density in each season
+fig1 =ggplot(bike_dis, aes(x = rented_bike_count , fill = seasons)) + 
+  geom_density(alpha = .6, adjust = .5, color = "grey") +
+  labs(x = "hourly count")
+
+#houry rented bike density in holiday/non-holiday
+fig2 =ggplot(bike_dis, aes(x = rented_bike_count , fill = holiday)) + 
+  geom_density(alpha = .6, adjust = .5, color = "grey") +
+  labs(x = "hourly count")
+
+#functioning day: hourly table
+fig3 = bike_dis %>% group_by(functioning_day) %>% 
+  summarise(mean_count = mean(rented_bike_count)) %>% 
+ggplot( aes(x=functioning_day , y=mean_count, fill = functioning_day )) +
+  geom_bar(stat="identity", alpha = .5) +
+  labs(y = "average count", x = "functioning")
+
+#weekday
+level_order = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+fig4 = ggplot(bike_dis, aes(x = factor(weekday, level = level_order), y = rented_bike_count)) + 
+  geom_violin(aes(fill = weekday), alpha = .5) + 
+  stat_summary(fun = "median", color = "blue")+ 
+  labs(x = "weekday") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+(fig1+fig2) / (fig3+fig4)
+```
+
+mars: var importance(look at it); partial dependence plots(degree)
+
+
+# data partition
+```{r}
+set.seed(2022)
+trRows <- createDataPartition(bike$rented_bike_count ,
+                              p = .8,
+                              list = F)
+
+# training data
+x <- model.matrix(rented_bike_count~.,bike)[trRows,-1]
+y <- bike$rented_bike_count[trRows]
+
+# test data
+x2 <- model.matrix(rented_bike_count~.,bike)[-trRows,-1]
+y2 <- bike$rented_bike_count[-trRows]
+
+#cv method
+ctrl5 <- trainControl(method = "repeatedcv", repeats = 5, number = 10) 
+
+
+```
+
