@@ -16,6 +16,7 @@ library(caret)
 library(tidyverse)
 library(corrplot)
 library(patchwork)
+library(vip)
 ```
 
 
@@ -108,16 +109,111 @@ trRows <- createDataPartition(bike$rented_bike_count ,
                               list = F)
 
 # training data
+trainData = bike[trRows, ]
 x <- model.matrix(rented_bike_count~.,bike)[trRows,-1]
 y <- bike$rented_bike_count[trRows]
 
 # test data
+testData = bike[-trRows, ]
 x2 <- model.matrix(rented_bike_count~.,bike)[-trRows,-1]
 y2 <- bike$rented_bike_count[-trRows]
 
-#cv method
-ctrl5 <- trainControl(method = "repeatedcv", repeats = 5, number = 10) 
+#cv method: repeated 10 folds for 5 times
+ctrl1 <- trainControl(method = "repeatedcv", repeats = 5, number = 10) 
+
+```
+
+## lm
+```{r}
+lm = lm(rented_bike_count~., data = trainData)
+summary(lm) 
+  
+set.seed(1234)
+lm.fit <- train(x, y,
+                method = "lm",
+                trControl = ctrl1)
+```
+
+## ridge
+```{r}
+set.seed(1234)
+ridge.fit <- train(x, y,
+                   method = "glmnet",
+                   tuneGrid = expand.grid(alpha = 0, 
+                                          lambda = exp(seq(10, -2, length=100))),
+                   # preProc = c("center", "scale"),
+                   trControl = ctrl1)
+
+plot(ridge.fit, xTrans = log)
+
+ridge.fit$bestTune
+
+# coefficients in the final model
+coef(ridge.fit$finalModel, s = ridge.fit$bestTune$lambda)
+```
+## lasso
+
+```{r}
+set.seed(1234)
+#choose less predictors
+ctrl2 <- trainControl(method = "repeatedcv", repeats = 5, number = 10, selectionFunction = "oneSE") 
+lasso.fit <- train(x, y,
+                   method = "glmnet",
+                   tuneGrid = expand.grid(alpha = 1, 
+                                          lambda = exp(seq(6, -6, length=100))),
+                   trControl = ctrl2)
+plot(lasso.fit, xTrans = log)
+
+lasso.fit$bestTune #almost no penalty : lambda is small
+
+coef(lasso.fit$finalModel, lasso.fit$bestTune$lambda)
+```
+
+## Elastic net
+
+```{r}
+set.seed(1234)
+enet.fit <- train(x, y,
+                  method = "glmnet",
+                  tuneGrid = expand.grid(alpha = seq(0, 1, length = 21), 
+                                         lambda = exp(seq(2, -2, length = 50))),
+                  trControl = ctrl1)
+enet.fit$bestTune
+
+myCol<- rainbow(25)
+myPar <- list(superpose.symbol = list(col = myCol),
+                    superpose.line = list(col = myCol))
+
+plot(enet.fit, par.settings = myPar)
+
+coef(enet.fit$finalModel, enet.fit$bestTune$lambda)
+```
+
+## Partial least square
+
+```{r}
 
 
+```
+
+## Mars
+
+```{r}
+set.seed(1234)
+model.mars <- train(x = x,
+                    y = y,
+                    method = "earth",
+                    tuneGrid = expand.grid(degree = 1:4, 
+                                           nprune = 2:30),
+                    trControl = ctrl1)
+
+plot(model.mars)
+
+coef(model.mars$finalModel) 
+
+model.mars$bestTune
+#pdp::partial(model.mars, pred.var = c("age"), grid.resolution = 200) %>% autoplot()
+
+vip(model.mars$finalModel)
 ```
 
