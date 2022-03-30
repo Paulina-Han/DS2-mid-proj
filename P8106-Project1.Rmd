@@ -17,6 +17,8 @@ library(tidyverse)
 library(corrplot)
 library(patchwork)
 library(vip)
+#library(PerformanceAnalytics)
+library("psych")
 ```
 
 
@@ -32,67 +34,82 @@ bike = bike_raw %>%
          month = as.factor(month),
          year = as.numeric(year)
          ) %>% 
-  select(-day,-month) %>% 
+  select(-day,-month,-year) %>% 
   mutate(
     seasons = as.factor(seasons),
     holiday = as.factor(holiday),
     functioning_day = as.factor(functioning_day),
     weekday = as.factor(weekday)
-  ) %>% 
-  filter(year == 2018) %>% 
-  select(-year)
+  )
 
 bike %>% skimr::skim()
 table(bike$functioning_day)
-
+a = summary(bike)
+a
+plot.ts(bike$rented_bike_count)
+acf(bike$rented_bike_count)
+pacf(bike$rented_bike_count)
 ```
 
 scatter plot: obs not independent(time series)
 ```{r continous_plot}
-#scatter plot
-theme1 <- trellis.par.get()
-theme1$plot.symbol$col <- rgb(.2, .4, .2, .5)
-theme1$plot.symbol$pch <- 16
-theme1$plot.line$col <- rgb(.8, .1, .1, 1)
-theme1$plot.line$lwd <- 2
-theme1$strip.background$col <- rgb(.0, .2, .6, .2)
-trellis.par.set(theme1)
-
-bike_con = bike %>% select(-c(seasons,holiday,functioning_day,weekday))
-
-featurePlot(bike_con[-1], bike_con$rented_bike_count, plot = "scatter", labels = c("","bike_rented"),type = c("p"), layout = c(3, 3),cex = 0.5, alpha = 0.5)
-#ts.plot(bike$rented_bike_count)
-
+#correlation plot
+#library("psych")
+pairs.panels(bike_con, 
+             hist.col= "orchid1", 
+             show.points=TRUE, 
+             stars=TRUE, 
+             gap=0.05, 
+             pch=".", 
+             ellipses=FALSE, 
+             scale=FALSE,
+             jiggle=TRUE,
+             factor=2,
+             main="Correlation Plot", 
+             col="aquamarine", 
+             pty="m", 
+             font=2,
+             alpha = 0.5)
 
 ```
 date into ascending 1~365
 rely on assumption iid(treat them as iid): limitations
-```{r discrete_plots, warning=FALSE}
-#hourly rented bike density in each season
-bike_dis = bike %>% select(c(seasons,holiday,functioning_day,weekday,rented_bike_count))
-#hourly rented bike density in each season
-fig1 =ggplot(bike_dis, aes(x = rented_bike_count , fill = seasons)) + 
-  geom_density(alpha = .6, adjust = .5, color = "grey") +
-  labs(x = "hourly count")
+```{r discrete_plots, warning=FALSE, message=FALSE}
+#discrete variable 
+bike_dis = bike %>% select(c(seasons,holiday,functioning_day,weekday,rented_bike_count,hour))
 
-#houry rented bike density in holiday/non-holiday
-fig2 =ggplot(bike_dis, aes(x = rented_bike_count , fill = holiday)) + 
-  geom_density(alpha = .6, adjust = .5, color = "grey") +
-  labs(x = "hourly count")
+# average hourly rented bike density in each season: line
+fig1 = bike_dis %>% group_by(seasons,hour) %>% 
+  summarise(average_count = mean(rented_bike_count)) %>% 
+  ggplot( aes(x = hour, y = average_count , group = seasons)) + 
+  geom_line(aes(color = seasons),alpha=0.6) +
+   geom_point(aes(color= seasons),  alpha=0.5)+
+  labs(x = "hour of the day", y = "average hourly count", title = "(a)")
 
-#functioning day: hourly table
-fig3 = bike_dis %>% group_by(functioning_day) %>% 
-  summarise(mean_count = mean(rented_bike_count)) %>% 
-ggplot( aes(x=functioning_day , y=mean_count, fill = functioning_day )) +
-  geom_bar(stat="identity", alpha = .5) +
-  labs(y = "average count", x = "functioning")
+#hourly rented bike density in holiday/non-holiday
+fig2 = bike_dis %>% group_by(holiday ,hour) %>% 
+  summarise(average_count = mean(rented_bike_count)) %>% 
+  ggplot( aes(x = hour, y = average_count , group = holiday)) + 
+  geom_line(aes(color = holiday), alpha=0.6) +
+   geom_point(aes(color= holiday),  alpha=0.5)+
+  labs(x = "hour of the day", y = "average hourly count", title = "(b)")
+ 
+#weekday day: hourly table
+level_order = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+fig3 = bike_dis %>% group_by(weekday ,hour) %>% 
+  summarise(average_count = mean(rented_bike_count)) %>% 
+  ggplot( aes(x = hour, y = average_count , group = factor(weekday, level = level_order))) + 
+  geom_line(aes(color = factor(weekday, level = level_order)) , alpha=0.6) +
+   geom_point(aes(color= factor(weekday, level = level_order)),  alpha=0.5)+
+  labs(x = "hour of the day", y = "average hourly count", title = "(c)")+ 
+  guides(color=guide_legend(title="weekday"))
 
 #weekday
 level_order = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 fig4 = ggplot(bike_dis, aes(x = factor(weekday, level = level_order), y = rented_bike_count)) + 
   geom_violin(aes(fill = weekday), alpha = .5) + 
   stat_summary(fun = "median", color = "blue")+ 
-  labs(x = "weekday") +
+  labs(x = "weekday" , y = "hourly count", title = "(d)") +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
 (fig1+fig2) / (fig3+fig4)
@@ -123,20 +140,24 @@ ctrl1 <- trainControl(method = "repeatedcv", repeats = 5, number = 10)
 
 ```
 
-## lm
+## lm:
+* residual plot: some kind of non-linear trend
 ```{r}
 lm = lm(rented_bike_count~., data = trainData)
 summary(lm) 
+plot(lm, which =1)
   
-set.seed(1234)
+set.seed(12345)
 lm.fit <- train(x, y,
                 method = "lm",
                 trControl = ctrl1)
+
+
 ```
 
 ## ridge
 ```{r}
-set.seed(1234)
+set.seed(12345)
 ridge.fit <- train(x, y,
                    method = "glmnet",
                    tuneGrid = expand.grid(alpha = 0, 
@@ -152,9 +173,9 @@ ridge.fit$bestTune
 coef(ridge.fit$finalModel, s = ridge.fit$bestTune$lambda)
 ```
 ## lasso
-
+* to get more sparse model: 1MSE cv rule
 ```{r}
-set.seed(1234)
+set.seed(12345)
 #choose less predictors
 ctrl2 <- trainControl(method = "repeatedcv", repeats = 5, number = 10, selectionFunction = "oneSE") 
 lasso.fit <- train(x, y,
@@ -172,12 +193,12 @@ coef(lasso.fit$finalModel, lasso.fit$bestTune$lambda)
 ## Elastic net
 
 ```{r}
-set.seed(1234)
+set.seed(12345)
 enet.fit <- train(x, y,
                   method = "glmnet",
                   tuneGrid = expand.grid(alpha = seq(0, 1, length = 21), 
                                          lambda = exp(seq(2, -2, length = 50))),
-                  trControl = ctrl1)
+                  trControl = ctrl2)
 enet.fit$bestTune
 
 myCol<- rainbow(25)
@@ -189,31 +210,99 @@ plot(enet.fit, par.settings = myPar)
 coef(enet.fit$finalModel, enet.fit$bestTune$lambda)
 ```
 
-## Partial least square
+## GAM
 
 ```{r}
+set.seed(12345)
+gam.fit <- train(x, y,
+                 method = "gam", #mgcv gam
+                 # tuneGrid = data.frame(method = "GCV.Cp", select = c(TRUE,FALSE)), 
+                 trControl = ctrl1)
+
+gam.fit$bestTune
+
+gam.fit$finalModel
+
+```
 
 
+## PLS
+```{r}
+set.seed(12345)
+pls.fit <- train(x, y,
+                 method = "pls",
+                 tuneGrid = data.frame(ncomp = 1:19),
+                 trControl = ctrl1,
+                 preProcess = c("center", "scale"))
+predy2.pls2 <- predict(pls.fit, newdata = x2)
+sqrt(mean((y2 - predy2.pls2)^2))
+
+ggplot(pls.fit, highlight = TRUE)
 ```
 
 ## Mars
 
 ```{r}
-set.seed(1234)
+set.seed(12345)
 model.mars <- train(x = x,
                     y = y,
                     method = "earth",
                     tuneGrid = expand.grid(degree = 1:4, 
-                                           nprune = 2:30),
+                                           nprune = 2:39),
                     trControl = ctrl1)
 
 plot(model.mars)
 
-coef(model.mars$finalModel) 
-
+summary(model.mars$finalModel)
+model.mars$finalModel
 model.mars$bestTune
 #pdp::partial(model.mars, pred.var = c("age"), grid.resolution = 200) %>% autoplot()
 
 vip(model.mars$finalModel)
+#hour partial plot:15,18,20
+# p1 <- pdp::partial(model.mars, pred.var = c("hour"), grid.resolution = 10) %>% autoplot()
+# p1
+# #temperature:30.1
+# p2 <- pdp::partial(model.mars, pred.var = c("temperature"), grid.resolution = 10) %>% autoplot()
+# p2
+# #humidity:77
+# p3 <- pdp::partial(model.mars, pred.var = c("humidity"), grid.resolution = 10) %>% autoplot()
+# p3
+# #temperature * hour
+# p4 <- pdp::partial(model.mars, pred.var = c("hour", "temperature"), 
+#                    grid.resolution = 10) %>%
+#       pdp::plotPartial(levelplot = FALSE, zlab = "yhat", drape = TRUE, 
+#                        screen = list(z = 20, x = -60))
+# 
+# p4
+# grid.arrange(p1, p2, p3, p4, nrow = 2)
+# 
+# p12 = grid.arrange(p1, p2, nrow = 2)
+# grid.arrange(p12, p4, ncol = 2)
+
+#humudity77
+ pdp::partial(model.mars, pred.var = c("humidity"), grid.resolution = 10) %>% autoplot()
+```
+
+# model comparison
+```{r}
+resamp <- resamples(list(
+                         lm = lm.fit,
+                         enet = enet.fit,
+                         pls = pls.fit,
+                         gam = gam.fit,
+                         mars = model.mars
+                         ))
+summary(resamp)
+
+bwplot(resamp, metric = "RMSE")
+```
+
+## predict in test set: MARS rmse(257.6274)
+```{r}
+pred.mars1 <- predict(model.mars, newdata = x2)
+test_error_mars1 = mean((pred.mars1 - y2)^2)
+sqrt(test_error_mars1)
+
 ```
 
